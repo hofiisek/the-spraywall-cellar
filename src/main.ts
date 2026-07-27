@@ -53,7 +53,11 @@ function isViewingLatest(): boolean {
 }
 
 const AVAILABLE_TAGS = ['Crimps', 'Slopers', 'Pinches', 'Underclings', 'Pockets', 'Dyno', 'Technical'];
-const GRADES = ['5a', '5a+', '5b', '5b+', '5c', '5c+', '6a', '6a+', '6b', '6b+', '6c', '6c+', '7a', '7a+', '7b', '7b+', '7c', '7c+'];
+const GRADES = [
+  '5a', '5a+', '5b', '5b+', '5c', '5c+',
+  '6a', '6a+', '6b', '6b+', '6c', '6c+', '6c+/7a',
+  '7a', '7a+', '7a+/b', '7b', '7b+', '7b+/c', '7c', '7c+',
+];
 const NAME_MAX_LENGTH = 100;
 const DESCRIPTION_MAX_LENGTH = 250;
 
@@ -66,6 +70,13 @@ const DESCRIPTION_MAX_LENGTH = 250;
  */
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/**
+ * Position of a grade within GRADES; unknown or missing grades rank lowest
+ */
+function gradeRank(grade?: string): number {
+  return grade ? GRADES.indexOf(grade) : -1;
 }
 
 /**
@@ -671,7 +682,7 @@ function renderBoulderList(): void {
   const readOnly = !isViewingLatest();
   listContainer.innerHTML = [...filtered]
     .sort((a, b) => {
-      const gradeDiff = (b.grade ?? '').localeCompare(a.grade ?? '');
+      const gradeDiff = gradeRank(b.grade) - gradeRank(a.grade);
       const ratingDiff = (b.rating ?? 0) - (a.rating ?? 0);
       if (gradeDiff !== 0) return gradeDiff;
       if (ratingDiff !== 0) return ratingDiff;
