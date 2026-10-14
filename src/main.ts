@@ -17,7 +17,8 @@ import {
 import { auth, googleProvider } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { openRecalibrationModal } from './calibrationUI';
-import { openClimbersModal, escapeHtml } from './climbersUI';
+import { openClimbersModal } from './climbersUI';
+import { escapeHtml } from './utils';
 
 const ADMIN_EMAIL = 'hofiisek@gmail.com';
 
@@ -560,6 +561,16 @@ async function saveCurrentBoulder(): Promise<void> {
     return;
   }
 
+  const currentId = state.currentBoulder.id;
+  const duplicate = state.boulders.find(
+    b => b.id !== currentId && b.name.trim().toLowerCase() === name.toLowerCase(),
+  );
+  if (duplicate) {
+    alert(`A boulder named "${duplicate.name}" already exists on this board.`);
+    nameInput.focus();
+    return;
+  }
+
   const grade = gradeInput.value.trim();
   if (!grade) {
     alert('Please enter a grade.');
@@ -725,16 +736,16 @@ function renderBoulderList(): void {
         >
           <div class="flex justify-between items-start">
             <div class="flex-1">
-              <h3 class="font-medium text-base md:text-sm">${boulder.name}</h3>
+              <h3 class="font-medium text-base md:text-sm">${escapeHtml(boulder.name)}</h3>
               <p class="text-sm md:text-sm text-gray-300 flex items-center gap-2">
-                ${boulder.grade ? `<span>${boulder.grade}</span>` : ''}
+                ${boulder.grade ? `<span>${escapeHtml(boulder.grade)}</span>` : ''}
                 ${boulder.rating ? `<span><span class="text-amber-400">${'★'.repeat(boulder.rating)}</span><span class="text-gray-600">${'★'.repeat(3 - boulder.rating)}</span></span>` : ''}
                 ${renderTickBadge(boulder)}
               </p>
-              ${boulder.description ? `<p class="text-xs md:text-xs text-gray-400 mt-1 italic whitespace-pre-wrap break-words">${boulder.description}</p>` : ''}
+              ${boulder.description ? `<p class="text-xs md:text-xs text-gray-400 mt-1 italic whitespace-pre-wrap break-words">${escapeHtml(boulder.description)}</p>` : ''}
               ${boulder.tags && boulder.tags.length > 0 ? `
                 <div class="flex flex-wrap gap-1 mt-1">
-                  ${boulder.tags.map(t => `<span class="px-2 py-0.5 rounded bg-gray-500 text-gray-100 text-xs">${t}</span>`).join('')}
+                  ${boulder.tags.map(t => `<span class="px-2 py-0.5 rounded bg-gray-500 text-gray-100 text-xs">${escapeHtml(t)}</span>`).join('')}
                 </div>
               ` : ''}
               <p class="text-sm md:text-xs text-gray-400 mt-1">${boulder.holds.length} holds</p>

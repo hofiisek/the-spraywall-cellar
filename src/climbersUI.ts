@@ -1,12 +1,9 @@
 import type { Climber } from './types';
 import { saveClimbers } from './storage';
+import { escapeHtml } from './utils';
 
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+function nameKey(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 /**
@@ -59,6 +56,10 @@ export function openClimbersModal(current: Climber[]): void {
   function addClimber(): void {
     const name = newInput.value.trim();
     if (!name) return;
+    if (climbers.some((c) => nameKey(c.name) === nameKey(name))) {
+      alert(`${name} is already on the list.`);
+      return;
+    }
     climbers.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name });
     newInput.value = '';
     renderRows();
@@ -93,6 +94,16 @@ export function openClimbersModal(current: Climber[]): void {
     const cleaned = climbers
       .map((c) => ({ id: c.id, name: c.name.trim() }))
       .filter((c) => c.name.length > 0);
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const c of cleaned) {
+      if (seen.has(nameKey(c.name))) duplicates.add(c.name);
+      seen.add(nameKey(c.name));
+    }
+    if (duplicates.size > 0) {
+      alert(`Duplicate climber names: ${[...duplicates].join(', ')}`);
+      return;
+    }
     saving = true;
     saveBtn.disabled = true;
     try {
