@@ -1,10 +1,12 @@
-import type { Board, Boulder } from './types';
+import type { Board, Boulder, Climber } from './types';
 import { db, storage } from './firebase';
 import {
   collection,
   doc,
   setDoc,
+  updateDoc,
   deleteDoc,
+  deleteField,
   onSnapshot,
   query,
   orderBy,
@@ -13,6 +15,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 
 const BOARDS_COLLECTION = 'boards';
 const BOULDERS_SUBCOLLECTION = 'boulders';
+const CLIMBERS_DOC = doc(db, 'config', 'climbers');
 
 // ============================================================================
 // Boards
@@ -130,5 +133,50 @@ export async function deleteBoulderFromFirebase(boardId: string, boulderId: stri
   } catch (error) {
     console.error('Failed to delete boulder:', error);
     throw new Error('Failed to delete boulder. Check your connection.');
+  }
+}
+
+/**
+ * Add or remove one climber's tick. Only the `ticks.{climberId}` field is
+ * written, so ticks recorded at the same time from another device are kept.
+ */
+export async function setTick(
+  boardId: string,
+  boulderId: string,
+  climberId: string,
+  ticked: boolean,
+): Promise<void> {
+  try {
+    await updateDoc(doc(bouldersCol(boardId), boulderId), {
+      [`ticks.${climberId}`]: ticked ? Date.now() : deleteField(),
+    });
+  } catch (error) {
+    console.error('Failed to update tick:', error);
+    throw new Error('Failed to update tick. Check your connection.');
+  }
+}
+
+// ============================================================================
+// Climbers (ticklist roster, stored in config/climbers)
+// ============================================================================
+
+export function subscribeToClimbers(callback: (climbers: Climber[]) => void): () => void {
+  return onSnapshot(
+    CLIMBERS_DOC,
+    (snap) => {
+      callback((snap.data()?.climbers as Climber[] | undefined) ?? []);
+    },
+    (error) => {
+      console.error('Error subscribing to climbers:', error);
+    },
+  );
+}
+
+export async function saveClimbers(climbers: Climber[]): Promise<void> {
+  try {
+    await setDoc(CLIMBERS_DOC, { climbers });
+  } catch (error) {
+    console.error('Failed to save climbers:', error);
+    throw new Error('Failed to save climbers. Check your connection.');
   }
 }

@@ -5,16 +5,19 @@
 
 import './styles/main.css';
 import Panzoom, { PanzoomObject } from '@panzoom/panzoom';
-import type { AppState, Board, Boulder, Hold } from './types';
+import type { AppState, Board, Boulder, Climber, Hold } from './types';
 import {
   saveBoulder,
   subscribeToBoulders,
   deleteBoulderFromFirebase,
   subscribeToAllBoards,
+  subscribeToClimbers,
+  setTick,
 } from './storage';
 import { auth, googleProvider } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { openRecalibrationModal } from './calibrationUI';
+import { openClimbersModal, escapeHtml } from './climbersUI';
 
 const ADMIN_EMAIL = 'hofiisek@gmail.com';
 
@@ -41,6 +44,11 @@ let allBoards: Board[] = [];
 let latestBoardId: string | null = null;
 let boardUnsub: (() => void) | null = null;
 let bouldersUnsub: (() => void) | null = null;
+let climbersUnsub: (() => void) | null = null;
+
+let climbers: Climber[] = [];
+/** Boulder whose ticklist popover is open, or null */
+let openTicklistBoulderId: string | null = null;
 
 const READ_ONLY_TOOLTIP = 'Historical board is read-only. Switch to the current board to make changes.';
 
@@ -213,6 +221,11 @@ function renderHTML(): void {
               <button id="btn-recalibrate" class="ml-1 p-0.5 text-purple-300 hover:text-purple-200 active:text-purple-100" title="Upload new photo & recalibrate">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0-12l-4 4m4-4l4 4" />
+                </svg>
+              </button>
+              <button id="btn-climbers" class="p-0.5 text-green-300 hover:text-green-200 active:text-green-100" title="Manage climbers">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                 </svg>
               </button>
               ` : ''}
@@ -581,6 +594,15 @@ async function saveCurrentBoulder(): Promise<void> {
   }
   state.currentBoulder.updatedAt = Date.now();
 
+  // saveBoulder overwrites the whole document, so take the latest ticks
+  // instead of the copy made when editing started.
+  const latestTicks = state.boulders.find(b => b.id === state.currentBoulder!.id)?.ticks;
+  if (latestTicks) {
+    state.currentBoulder.ticks = latestTicks;
+  } else {
+    delete state.currentBoulder.ticks;
+  }
+
   if (!activeBoard) {
     alert('No board configured yet. Please reload or contact the admin.');
     return;
@@ -704,12 +726,11 @@ function renderBoulderList(): void {
           <div class="flex justify-between items-start">
             <div class="flex-1">
               <h3 class="font-medium text-base md:text-sm">${boulder.name}</h3>
-              ${boulder.grade || boulder.rating ? `
-                <p class="text-sm md:text-sm text-gray-300 flex items-center gap-2">
-                  ${boulder.grade ? `<span>${boulder.grade}</span>` : ''}
-                  ${boulder.rating ? `<span><span class="text-amber-400">${'★'.repeat(boulder.rating)}</span><span class="text-gray-600">${'★'.repeat(3 - boulder.rating)}</span></span>` : ''}
-                </p>
-              ` : ''}
+              <p class="text-sm md:text-sm text-gray-300 flex items-center gap-2">
+                ${boulder.grade ? `<span>${boulder.grade}</span>` : ''}
+                ${boulder.rating ? `<span><span class="text-amber-400">${'★'.repeat(boulder.rating)}</span><span class="text-gray-600">${'★'.repeat(3 - boulder.rating)}</span></span>` : ''}
+                ${renderTickBadge(boulder)}
+              </p>
               ${boulder.description ? `<p class="text-xs md:text-xs text-gray-400 mt-1 italic whitespace-pre-wrap break-words">${boulder.description}</p>` : ''}
               ${boulder.tags && boulder.tags.length > 0 ? `
                 <div class="flex flex-wrap gap-1 mt-1">
@@ -759,6 +780,8 @@ function renderBoulderList(): void {
     })
     .join('');
 
+  renderTicklistPopover();
+
   // Add click handlers
   listContainer.querySelectorAll('[data-boulder-id]').forEach((el) => {
     el.addEventListener('click', (e) => {
@@ -766,6 +789,7 @@ function renderBoulderList(): void {
       if (target.closest('[data-delete-boulder]')) return; // Ignore if clicking delete button
       if (target.closest('[data-edit-boulder]')) return; // Ignore if clicking edit button
       if (target.closest('[data-toggle-lock]')) return; // Ignore if clicking lock button
+      if (target.closest('[data-ticklist]')) return; // Ignore if clicking the tick badge
 
       const boulderId = (el as HTMLElement).dataset.boulderId!;
       selectBoulder(boulderId);
@@ -792,6 +816,19 @@ function renderBoulderList(): void {
     });
   });
 
+  // Add tick badge handlers
+  listContainer.querySelectorAll('[data-ticklist]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const boulderId = (el as HTMLElement).dataset.ticklist!;
+      if (openTicklistBoulderId === boulderId) {
+        closeTicklistPopover();
+      } else {
+        openTicklistPopover(boulderId, el as HTMLElement);
+      }
+    });
+  });
+
   // Add delete handlers
   listContainer.querySelectorAll('[data-delete-boulder]').forEach((el) => {
     el.addEventListener('click', (e) => {
@@ -802,6 +839,113 @@ function renderBoulderList(): void {
       deleteBoulder(boulderId);
     });
   });
+}
+
+// ============================================================================
+// Ticklist
+// ============================================================================
+
+/** Ticks of climbers who are still on the roster */
+function rosterTicks(boulder: Boulder): Climber[] {
+  return climbers.filter(c => boulder.ticks?.[c.id] !== undefined);
+}
+
+function renderTickBadge(boulder: Boulder): string {
+  const count = rosterTicks(boulder).length;
+  const colors = count > 0 ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300';
+  return `
+    <button
+      class="inline-flex items-center gap-1 rounded-full pl-1 pr-2 py-0.5 text-xs font-medium ${colors} hover:brightness-110"
+      data-ticklist="${boulder.id}"
+      title="Ticklist"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      ${count}
+    </button>
+  `;
+}
+
+function openTicklistPopover(boulderId: string, anchor: HTMLElement): void {
+  closeTicklistPopover();
+  openTicklistBoulderId = boulderId;
+
+  const popover = document.createElement('div');
+  popover.id = 'ticklist-popover';
+  popover.className = 'fixed z-40 w-60 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl p-3 text-white';
+  document.body.appendChild(popover);
+
+  popover.addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const climberId = input.dataset.tickClimber;
+    if (!climberId || !activeBoard) return;
+    try {
+      await setTick(activeBoard.id, boulderId, climberId, input.checked);
+    } catch (error) {
+      input.checked = !input.checked;
+      alert('Failed to update tick. Please check your connection.');
+      console.error(error);
+    }
+  });
+
+  renderTicklistPopover();
+
+  // Place below the badge, kept inside the viewport
+  const rect = anchor.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.min(rect.left, window.innerWidth - popover.offsetWidth - margin);
+  let top = rect.bottom + 4;
+  if (top + popover.offsetHeight > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - popover.offsetHeight - 4);
+  }
+  popover.style.left = `${Math.max(margin, left)}px`;
+  popover.style.top = `${top}px`;
+}
+
+function closeTicklistPopover(): void {
+  openTicklistBoulderId = null;
+  document.querySelector('#ticklist-popover')?.remove();
+}
+
+/** Re-render the open popover's contents from the current state */
+function renderTicklistPopover(): void {
+  const popover = document.querySelector('#ticklist-popover') as HTMLElement | null;
+  if (!popover) return;
+  const boulder = state.boulders.find(b => b.id === openTicklistBoulderId);
+  if (!boulder) {
+    closeTicklistPopover();
+    return;
+  }
+
+  const disabledReason = !currentUser
+    ? 'Login to tick boulders'
+    : !isViewingLatest()
+      ? READ_ONLY_TOOLTIP
+      : null;
+
+  const rows = climbers.map((c) => {
+    const tickedAt = boulder.ticks?.[c.id];
+    const date = tickedAt !== undefined
+      ? new Date(tickedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+      : '';
+    return `
+      <label class="flex items-center gap-2 py-1 ${disabledReason ? 'cursor-not-allowed' : 'cursor-pointer'}">
+        <input type="checkbox" class="w-4 h-4 accent-green-600" data-tick-climber="${c.id}"
+          ${tickedAt !== undefined ? 'checked' : ''} ${disabledReason ? 'disabled' : ''} />
+        <span class="text-sm">${escapeHtml(c.name)}</span>
+        <span class="ml-auto text-xs text-gray-400">${date}</span>
+      </label>
+    `;
+  }).join('');
+
+  popover.innerHTML = `
+    <div class="text-sm font-semibold mb-2">Ticklist · ${rosterTicks(boulder).length}</div>
+    ${climbers.length > 0
+      ? `<div class="max-h-64 overflow-y-auto">${rows}</div>`
+      : `<p class="text-xs text-gray-400">No climbers yet.${isAdmin() ? ' Add them via the climbers icon next to the board name.' : ''}</p>`}
+    ${disabledReason ? `<p class="text-xs text-yellow-500 mt-2">${disabledReason}</p>` : ''}
+  `;
 }
 
 /**
@@ -1126,6 +1270,15 @@ function setupEventListeners(): void {
   document.querySelector('#btn-clear')?.addEventListener('click', clearCurrentBoulder);
 
   // Recalibrate button (admin only — element only rendered for admin)
+  document.querySelector('#btn-climbers')?.addEventListener('click', () => {
+    if (!isAdmin()) return;
+    openClimbersModal(climbers);
+  });
+
+  // Close the ticklist popover when the list scrolls (it's positioned relative to the viewport)
+  document.querySelector('#climb-mode-content')?.addEventListener('scroll', closeTicklistPopover);
+  document.querySelector('#climb-mode-content')?.parentElement?.addEventListener('scroll', closeTicklistPopover);
+
   document.querySelector('#btn-recalibrate')?.addEventListener('click', () => {
     if (!isAdmin()) return;
     if (!activeBoard) {
@@ -1158,6 +1311,18 @@ function setupEventListeners(): void {
  * Initialize the application
  */
 async function init(): Promise<void> {
+  // Close the ticklist popover on outside click, Escape, or resize. Registered
+  // here (not in setupEventListeners) because these targets survive re-renders.
+  document.addEventListener('pointerdown', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('#ticklist-popover') || target.closest('[data-ticklist]')) return;
+    closeTicklistPopover();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeTicklistPopover();
+  });
+  window.addEventListener('resize', closeTicklistPopover);
+
   // Set up auth state listener
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
@@ -1274,6 +1439,11 @@ async function showApp(): Promise<void> {
     bouldersUnsub();
     bouldersUnsub = null;
   }
+  if (climbersUnsub) {
+    climbersUnsub();
+    climbersUnsub = null;
+  }
+  closeTicklistPopover();
 
   // Render UI first (uses activeBoard for the image src)
   renderHTML();
@@ -1302,6 +1472,11 @@ async function showApp(): Promise<void> {
       renderBoardSelector();
       applyReadOnlyState();
     }
+  });
+
+  climbersUnsub = subscribeToClimbers((list) => {
+    climbers = list;
+    renderBoulderList();
   });
 
   // Initialize panzoom

@@ -36,6 +36,16 @@ export interface Boulder {
   updatedAt: number;
   /** Whether this boulder is locked (only master can edit/delete) */
   isLocked?: boolean;
+  /** Ticklist: climber id → timestamp of when the tick was recorded */
+  ticks?: Record<string, number>;
+}
+
+/**
+ * A person on the shared ticklist roster (stored in config/climbers)
+ */
+export interface Climber {
+  id: string;
+  name: string;
 }
 
 /**
