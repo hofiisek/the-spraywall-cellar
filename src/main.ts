@@ -929,8 +929,8 @@ function renderTicklistPopover(): void {
     return;
   }
 
-  const disabledReason = !currentUser
-    ? 'Login to tick boulders'
+  const disabledReason = !isAdmin()
+    ? 'Only the admin can update the ticklist'
     : !isViewingLatest()
       ? READ_ONLY_TOOLTIP
       : null;
